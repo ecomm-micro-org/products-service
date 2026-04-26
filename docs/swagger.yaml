@@ -1,0 +1,334 @@
+basePath: /
+definitions:
+  controllers.ErrorMsg:
+    type: object
+  dto.OrderItem:
+    properties:
+      product_id:
+        type: integer
+      quantity:
+        type: integer
+    type: object
+  dto.ProductRequestDTO:
+    properties:
+      category:
+        type: string
+      description:
+        maxLength: 250
+        minLength: 0
+        type: string
+      image:
+        type: string
+      in_stock:
+        type: boolean
+      name:
+        type: string
+      original_price:
+        type: number
+      price:
+        format: float64
+        type: number
+      stock:
+        type: integer
+      tags:
+        items:
+          type: string
+        type: array
+    required:
+    - category
+    - image
+    - in_stock
+    - name
+    - original_price
+    - stock
+    type: object
+  dto.ProductResponseDTO:
+    properties:
+      category:
+        type: string
+      description:
+        type: string
+      id:
+        type: integer
+      image:
+        type: string
+      in_stock:
+        type: boolean
+      name:
+        type: string
+      original_price:
+        type: number
+      price:
+        type: number
+      rating:
+        type: integer
+      reviews:
+        type: integer
+      stock:
+        type: integer
+      tags:
+        items:
+          type: string
+        type: array
+    type: object
+host: localhost:42069
+info:
+  contact:
+    email: support@swagger.io
+    name: API Support
+    url: http://www.swagger.io/support
+  description: This is a products server for ecomm micro project
+  license:
+    name: Apache 2.0
+    url: http://www.apache.org/licenses/LICENSE-2.0.html
+  termsOfService: http://swagger.io/terms/
+  title: products microservice API
+  version: "1.0"
+paths:
+  /add:
+    post:
+      consumes:
+      - application/json
+      description: Adds a new product
+      parameters:
+      - description: product details
+        in: body
+        name: product
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ProductRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/dto.ProductResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+      security:
+      - BearerAuth: []
+      summary: Add Product
+      tags:
+      - product
+  /calculate_total_price:
+    post:
+      consumes:
+      - application/json
+      description: Calculates the total price of order items
+      parameters:
+      - description: array of order items
+        in: body
+        name: orderItems
+        required: true
+        schema:
+          items:
+            $ref: '#/definitions/dto.OrderItem'
+          type: array
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.ProductResponseDTO'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+      summary: Calculate Total Price
+      tags:
+      - product
+  /fetch_by_ids:
+    post:
+      consumes:
+      - application/json
+      description: Fetches products by an array of ids
+      parameters:
+      - description: array of product ids
+        in: body
+        name: productIDs
+        required: true
+        schema:
+          items:
+            type: integer
+          type: array
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.ProductResponseDTO'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            type: string
+      summary: Fetch Products by IDs
+      tags:
+      - product
+  /product/{id}:
+    delete:
+      description: Deletes a product by id
+      parameters:
+      - description: product id
+        in: path
+        name: id
+        required: true
+        type: integer
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+      security:
+      - BearerAuth: []
+      summary: Delete Product
+      tags:
+      - product
+    get:
+      description: Fetches an product by its id
+      parameters:
+      - description: product search by id
+        in: path
+        name: id
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dto.ProductResponseDTO'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            type: string
+      summary: Fetch Product
+      tags:
+      - product
+    put:
+      consumes:
+      - application/json
+      description: Updates an existing product by id
+      parameters:
+      - description: product id
+        in: path
+        name: id
+        required: true
+        type: integer
+      - description: product details
+        in: body
+        name: product
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ProductRequestDTO'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+      security:
+      - BearerAuth: []
+      summary: Update Product
+      tags:
+      - product
+  /search/{filter}:
+    get:
+      description: Searches products by keyword
+      parameters:
+      - description: keyword to search
+        in: path
+        name: filter
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/dto.ProductResponseDTO'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/controllers.ErrorMsg'
+      summary: Search Products
+      tags:
+      - product
+swagger: "2.0"

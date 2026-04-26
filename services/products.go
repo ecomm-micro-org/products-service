@@ -1,114 +1,90 @@
 package services
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
-	"net/http"
 	"products/internal/cache"
-	"products/internal/config"
 	"products/internal/dto"
 	"products/internal/token"
 	"products/models"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/pgvector/pgvector-go"
+	"google.golang.org/genai"
 )
 
+type Storer interface {
+	AddProduct(p *models.Product) error
+	SearchProductsByKeyword(keyword string) ([]*models.Product, error)
+	GetProductByID(id uint, p *models.Product) error
+	GetProductsByIDs(productIDs []uint) ([]*models.Product, error)
+	UpdateProduct(p *models.Product) error
+	DecreaseProductStock(id uint, count uint) (*models.Product, error)
+	DeleteProduct(id uint) error
+	AddEmbedding(e *models.Embedding) error
+	GetCollectionByName(name string) (string, error)
+}
+
 type ProductService struct {
-	UserClaims         *token.UserClaims
-	ProductRequestDTO  dto.ProductRequestDTO
-	ProductResponseDTO dto.ProductResponseDTO
+	UserClaims     *token.UserClaims
+	store          Storer
+	genaiClient    *genai.Client
+	messageService *MessageService
 }
 
-func New() *ProductService {
-	return &ProductService{}
+func NewProductService(store Storer, genaiClient *genai.Client, messageService *MessageService) *ProductService {
+	return &ProductService{
+		store:          store,
+		genaiClient:    genaiClient,
+		messageService: messageService,
+	}
 }
 
-func (p *ProductService) generateTextEmbedding(ctx context.Context, text string) ([]float32, error) {
-	embeddingModelURL := config.Config().EmbeddingModelURL
-
-	reqData := struct {
-		Model  string `json:"model"`
-		Prompt string `json:"prompt"`
-	}{
-		Model:  config.Config().EmbeddingModelName,
-		Prompt: text,
-	}
-
-	reqBody, err := json.Marshal(reqData)
-	if err != nil {
-		return nil, err
-	}
-
-	res, err := http.Post(embeddingModelURL, "application/json", bytes.NewBuffer(reqBody))
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-
-	body, err := io.ReadAll(res.Body)
-	if err != nil {
-		return nil, err
-	}
-
-	var resData struct {
-		Embedding []float32 `json:"embedding"`
-	}
-	if err := json.Unmarshal(body, &resData); err != nil {
-		return nil, err
-	}
-
-	return resData.Embedding, nil
-}
-
-func (p *ProductService) GetProductByID(ctx context.Context, id uint) error {
-	m := models.New()
+func (p *ProductService) GetProductByID(ctx context.Context, id uint) (*dto.ProductResponseDTO, error) {
+	m := models.NewProduct()
 
 	cacheKey := fmt.Sprintf("product:%v", id)
 	val, err := cache.Client().Get(ctx, cacheKey).Result()
 	if err == nil {
 		if err = json.Unmarshal([]byte(val), &m); err != nil {
-			return err
+			return nil, err
 		}
 	} else {
-		m.ID = id
-		if err := m.GetProductByID(); err != nil {
-			return err
+		if err := p.store.GetProductByID(id, m); err != nil {
+			return nil, err
 		}
 
 		cacheKey := fmt.Sprintf("product:%v", m.ID)
 		cacheData, err := json.Marshal(m)
 		if err != nil {
-			return err
+			return nil, err
 		}
 
-		cache.Client().Set(ctx, cacheKey, cacheData, 30*time.Minute)
+		cache.Client().Set(ctx, cacheKey, cacheData, 10*time.Minute)
 	}
 
-	p.ProductResponseDTO.ID = m.ID
-	p.ProductResponseDTO.Name = m.Name
-	p.ProductResponseDTO.Price = m.Price
-	p.ProductResponseDTO.OriginalPrice = m.OriginalPrice
-	p.ProductResponseDTO.Image = m.Image
-	p.ProductResponseDTO.Category = m.Category
-	p.ProductResponseDTO.Description = m.Description
-	p.ProductResponseDTO.Stock = m.Stock
-	p.ProductResponseDTO.InStock = m.InStock
-	p.ProductResponseDTO.Rating = m.Rating
-	p.ProductResponseDTO.Reviews = m.Reviews
-	p.ProductResponseDTO.Tags = m.Tags
+	productResponse := &dto.ProductResponseDTO{}
+	productResponse.ID = m.ID
+	productResponse.Name = m.Name
+	productResponse.Price = m.Price
+	productResponse.OriginalPrice = m.OriginalPrice
+	productResponse.Image = m.Image
+	productResponse.Category = m.Category
+	productResponse.Description = m.Description
+	productResponse.Stock = m.Stock
+	productResponse.InStock = m.InStock
+	productResponse.Rating = m.Rating
+	productResponse.Reviews = m.Reviews
+	productResponse.Tags = m.Tags
 
-	return nil
+	return productResponse, nil
 }
 
 func (p *ProductService) GetProductsByIDs(productIDs []uint) ([]dto.ProductResponseDTO, error) {
-	m := models.New()
-
-	products, err := m.GetProductsByIDs(productIDs)
+	products, err := p.store.GetProductsByIDs(productIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -116,41 +92,39 @@ func (p *ProductService) GetProductsByIDs(productIDs []uint) ([]dto.ProductRespo
 	var productResponses []dto.ProductResponseDTO
 
 	for _, v := range products {
-		productResponseDTO := &dto.ProductResponseDTO{}
+		productResponse := &dto.ProductResponseDTO{}
 
-		productResponseDTO.ID = v.ID
-		productResponseDTO.Name = v.Name
-		productResponseDTO.Price = v.Price
-		productResponseDTO.OriginalPrice = v.OriginalPrice
-		productResponseDTO.Image = v.Image
-		productResponseDTO.Category = v.Category
-		productResponseDTO.Description = v.Description
-		productResponseDTO.Stock = v.Stock
-		productResponseDTO.InStock = v.InStock
-		productResponseDTO.Rating = v.Rating
-		productResponseDTO.Reviews = v.Reviews
-		productResponseDTO.Tags = v.Tags
+		productResponse.ID = v.ID
+		productResponse.Name = v.Name
+		productResponse.Price = v.Price
+		productResponse.OriginalPrice = v.OriginalPrice
+		productResponse.Image = v.Image
+		productResponse.Category = v.Category
+		productResponse.Description = v.Description
+		productResponse.Stock = v.Stock
+		productResponse.InStock = v.InStock
+		productResponse.Rating = v.Rating
+		productResponse.Reviews = v.Reviews
+		productResponse.Tags = v.Tags
 
-		productResponses = append(productResponses, *productResponseDTO)
+		productResponses = append(productResponses, *productResponse)
 	}
 
 	return productResponses, nil
 }
 
 func (p *ProductService) CalculateTotalPrice(orderItems []dto.OrderItem) (float64, error) {
-	m := models.New()
-
 	var productIDs []uint
 	for _, v := range orderItems {
 		productIDs = append(productIDs, v.ProductID)
 	}
 
-	products, err := m.GetProductsByIDs(productIDs)
+	products, err := p.store.GetProductsByIDs(productIDs)
 	if err != nil {
 		return 0, err
 	}
 
-	productMap := make(map[uint]models.Product)
+	productMap := make(map[uint]*models.Product)
 	for _, product := range products {
 		productMap[product.ID] = product
 	}
@@ -167,9 +141,8 @@ func (p *ProductService) CalculateTotalPrice(orderItems []dto.OrderItem) (float6
 	return total, nil
 }
 
-func (p *ProductService) SearchProductsByKeyword(ctx context.Context, keyword string) ([]dto.ProductResponseDTO, error) {
-	m := models.New()
-	var products []models.Product
+func (p *ProductService) SearchProductsByKeyword(ctx context.Context, keyword string) ([]*dto.ProductResponseDTO, error) {
+	var products []*models.Product
 
 	val, err := cache.Client().Get(ctx, keyword).Result()
 	if err == nil {
@@ -177,131 +150,167 @@ func (p *ProductService) SearchProductsByKeyword(ctx context.Context, keyword st
 			return nil, err
 		}
 	} else {
-		products, err = m.SearchProductsByKeyword(keyword)
+		products, err = p.store.SearchProductsByKeyword(keyword)
 		if err != nil {
 			return nil, err
 		}
 
-		cacheData, err := json.Marshal(m)
+		cacheData, err := json.Marshal(products)
 		if err != nil {
 			return nil, err
 		}
 
 		if cmd := cache.Client().Set(ctx, keyword, cacheData, 30*time.Minute); cmd.Err() != nil {
-			return nil, cmd.Err()
+			log.Println(cmd.Err())
 		}
 	}
 
-	var productResponses []dto.ProductResponseDTO
+	var productResponses []*dto.ProductResponseDTO
 
 	for _, v := range products {
-		productResponseDTO := &dto.ProductResponseDTO{}
+		productResponse := &dto.ProductResponseDTO{}
 
-		productResponseDTO.ID = v.ID
-		productResponseDTO.Name = v.Name
-		productResponseDTO.Price = v.Price
-		productResponseDTO.OriginalPrice = v.OriginalPrice
-		productResponseDTO.Image = v.Image
-		productResponseDTO.Category = v.Category
-		productResponseDTO.Description = v.Description
-		productResponseDTO.Stock = v.Stock
-		productResponseDTO.InStock = v.InStock
-		productResponseDTO.Rating = v.Rating
-		productResponseDTO.Reviews = v.Reviews
-		productResponseDTO.Tags = v.Tags
+		productResponse.ID = v.ID
+		productResponse.Name = v.Name
+		productResponse.Price = v.Price
+		productResponse.OriginalPrice = v.OriginalPrice
+		productResponse.Image = v.Image
+		productResponse.Category = v.Category
+		productResponse.Description = v.Description
+		productResponse.Stock = v.Stock
+		productResponse.InStock = v.InStock
+		productResponse.Rating = v.Rating
+		productResponse.Reviews = v.Reviews
+		productResponse.Tags = v.Tags
 
-		productResponses = append(productResponses, *productResponseDTO)
+		productResponses = append(productResponses, productResponse)
 	}
 
 	return productResponses, nil
 }
 
-func (p *ProductService) AddProduct(ctx context.Context) error {
-	if p.UserClaims.Role != "seller" {
-		return fmt.Errorf("cannot list product as user is not a seller")
+func structToText(v any) (string, error) {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+func generateEmbedding(ctx context.Context, client *genai.Client, data any) ([]float32, error) {
+	text, err := structToText(data)
+	if err != nil {
+		return nil, err
 	}
 
-	m := models.New()
+	embeddings, err := client.Models.EmbedContent(
+		ctx,
+		"gemini-embedding-2-preview",
+		genai.Text(text),
+		nil,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return embeddings.Embeddings[0].Values, nil
+}
 
-	m.Name = p.ProductRequestDTO.Name
-	m.Price = p.ProductRequestDTO.Price
-	m.OriginalPrice = p.ProductRequestDTO.OriginalPrice
-	m.Image = p.ProductRequestDTO.Image
-	m.Category = p.ProductRequestDTO.Category
-	m.Description = p.ProductRequestDTO.Description
-	m.Stock = p.ProductRequestDTO.Stock
-	m.InStock = p.ProductRequestDTO.InStock
-	m.Tags = p.ProductRequestDTO.Tags
+func (p *ProductService) AddProduct(ctx context.Context, productRequest *dto.ProductRequestDTO) (*dto.ProductResponseDTO, error) {
+	if p.UserClaims.Role != "seller" {
+		return nil, fmt.Errorf("cannot list product as user is not a seller")
+	}
 
-	if err := m.AddProduct(); err != nil {
-		return err
+	m := models.NewProduct()
+
+	m.Name = productRequest.Name
+	m.Price = productRequest.Price
+	m.OriginalPrice = productRequest.OriginalPrice
+	m.Image = productRequest.Image
+	m.Category = productRequest.Category
+	m.Description = productRequest.Description
+	m.Stock = productRequest.Stock
+	m.InStock = productRequest.InStock
+	m.Tags = productRequest.Tags
+
+	if err := p.store.AddProduct(m); err != nil {
+		return nil, err
 	}
 
 	cacheKey := fmt.Sprintf("product:%v", m.ID)
 	cacheData, err := json.Marshal(m)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	if cmd := cache.Client().Set(ctx, cacheKey, cacheData, 30*time.Minute); cmd.Err() != nil {
 		log.Printf("unable to save product in cache : %v", err)
 	}
 
-	p.ProductResponseDTO.ID = m.ID
-	p.ProductResponseDTO.Name = m.Name
-	p.ProductResponseDTO.Price = m.Price
-	p.ProductResponseDTO.OriginalPrice = m.OriginalPrice
-	p.ProductResponseDTO.Image = m.Image
-	p.ProductResponseDTO.Category = m.Category
-	p.ProductResponseDTO.Description = m.Description
-	p.ProductResponseDTO.Stock = m.Stock
-	p.ProductResponseDTO.InStock = m.InStock
-	p.ProductResponseDTO.Rating = m.Rating
-	p.ProductResponseDTO.Reviews = m.Reviews
-	p.ProductResponseDTO.Tags = m.Tags
+	productResponse := &dto.ProductResponseDTO{}
+	productResponse.ID = m.ID
+	productResponse.Name = m.Name
+	productResponse.Price = m.Price
+	productResponse.OriginalPrice = m.OriginalPrice
+	productResponse.Image = m.Image
+	productResponse.Category = m.Category
+	productResponse.Description = m.Description
+	productResponse.Stock = m.Stock
+	productResponse.InStock = m.InStock
+	productResponse.Rating = m.Rating
+	productResponse.Reviews = m.Reviews
+	productResponse.Tags = m.Tags
 
-	embedding, err := p.generateTextEmbedding(ctx, fmt.Sprintf("%v", m.String()))
+	embeddings, err := generateEmbedding(ctx, p.genaiClient, productResponse)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	metadata, err := json.Marshal(map[string]any{
 		"productId": m.ID,
 	})
 	if err != nil {
-		return err
+		return nil, err
+	}
+
+	collectionID, err := p.store.GetCollectionByName("products")
+	if err != nil {
+		return nil, err
 	}
 
 	e := models.NewEmbedding()
-	e.Embedding = pgvector.NewVector(embedding)
-	e.Content = m.String()
-	e.Metadata = json.RawMessage(metadata)
-	if err := e.AddEmbedding(ctx); err != nil {
-		return err
+	e.ID = uuid.New()
+	e.CollectionID = collectionID
+	e.Embedding = pgvector.NewVector(embeddings)
+	e.Document = m.String()
+	e.Cmetadata = json.RawMessage(metadata)
+	if err := p.store.AddEmbedding(e); err != nil {
+		return nil, err
 	}
 
-	return nil
+	go p.messageService.SendMessage(m.ID, m.Name, m.OriginalPrice)
+
+	return productResponse, nil
 }
 
-func (p *ProductService) UpdateProduct(ctx context.Context, id uint) error {
+func (p *ProductService) UpdateProduct(ctx context.Context, id uint, productRequest *dto.ProductRequestDTO) error {
 	if p.UserClaims.Role != "seller" {
 		return fmt.Errorf("cannot list product as user is not a seller")
 	}
 
-	m := models.New()
+	m := models.NewProduct()
 
 	m.ID = id
-	m.Name = p.ProductRequestDTO.Name
-	m.Price = p.ProductRequestDTO.Price
-	m.OriginalPrice = p.ProductRequestDTO.OriginalPrice
-	m.Image = p.ProductRequestDTO.Image
-	m.Category = p.ProductRequestDTO.Category
-	m.Description = p.ProductRequestDTO.Description
-	m.Stock = p.ProductRequestDTO.Stock
-	m.InStock = p.ProductRequestDTO.InStock
-	m.Tags = p.ProductRequestDTO.Tags
+	m.Name = productRequest.Name
+	m.Price = productRequest.Price
+	m.OriginalPrice = productRequest.OriginalPrice
+	m.Image = productRequest.Image
+	m.Category = productRequest.Category
+	m.Description = productRequest.Description
+	m.Stock = productRequest.Stock
+	m.InStock = productRequest.InStock
+	m.Tags = productRequest.Tags
 
-	if err := m.UpdateProduct(); err != nil {
+	if err := p.store.UpdateProduct(m); err != nil {
 		return err
 	}
 
@@ -318,10 +327,8 @@ func (p *ProductService) UpdateProduct(ctx context.Context, id uint) error {
 }
 
 func (p *ProductService) DecreaseProductStock(ctx context.Context, id uint, count uint) error {
-	m := models.New()
-	m.ID = id
-
-	if err := m.DecreaseProductStock(count); err != nil {
+	m, err := p.store.DecreaseProductStock(id, count)
+	if err != nil {
 		return err
 	}
 
@@ -336,33 +343,28 @@ func (p *ProductService) DecreaseProductStock(ctx context.Context, id uint, coun
 	return nil
 }
 
-func (p *ProductService) IncreaseProductStock(ctx context.Context, id uint, count uint) error {
-	m := models.New()
-	m.ID = id
-
-	if err := m.DecreaseProductStock(count); err != nil {
-		return err
-	}
-
-	cacheKey := fmt.Sprintf("product:%v", m.ID)
-	cacheData, err := json.Marshal(m)
-	if err != nil {
-		return err
-	}
-
-	cache.Client().Set(ctx, cacheKey, cacheData, 30*time.Minute)
-
-	return nil
-}
+// func (p *ProductService) IncreaseProductStock(ctx context.Context, id uint, count uint) error {
+// 	if err := m.DecreaseProductStock(count); err != nil {
+// 		return err
+// 	}
+//
+// 	cacheKey := fmt.Sprintf("product:%v", m.ID)
+// 	cacheData, err := json.Marshal(m)
+// 	if err != nil {
+// 		return err
+// 	}
+//
+// 	cache.Client().Set(ctx, cacheKey, cacheData, 30*time.Minute)
+//
+// 	return nil
+// }
 
 func (p *ProductService) DeleteProduct(ctx context.Context, id uint) error {
 	if p.UserClaims.Role != "seller" {
 		return fmt.Errorf("cannot list product as user is not a seller")
 	}
-	m := models.New()
-	m.ID = id
 
 	cacheKey := fmt.Sprintf("product:%v", id)
 	cache.Client().Del(ctx, cacheKey)
-	return m.DeleteProduct()
+	return p.store.DeleteProduct(id)
 }
