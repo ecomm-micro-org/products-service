@@ -7,7 +7,7 @@ on:
     branches: ["main"]
 
 env:
-  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/micro-ecomm-api-gateway
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/micro-ecomm-products-service
 
 jobs:
   test:
