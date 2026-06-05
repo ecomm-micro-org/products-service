@@ -1,8 +1,7 @@
 package cache
 
 import (
-	"products/internal/config"
-
+	"github.com/ecomm-micro-org/products-service/internal/config"
 	"github.com/redis/go-redis/v9"
 )
 

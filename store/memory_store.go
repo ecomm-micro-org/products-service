@@ -1,8 +1,6 @@
 package store
 
-import (
-	"products/models"
-)
+import "github.com/ecomm-micro-org/products-service/models"
 
 type MemoryStore struct {
 	db map[uint]*models.Product

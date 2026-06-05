@@ -3,8 +3,8 @@ package store
 import (
 	"errors"
 	"fmt"
-	"products/models"
 
+	"github.com/ecomm-micro-org/products-service/models"
 	"gorm.io/gorm"
 )
 
@@ -22,14 +22,14 @@ func NewPGStore(db *gorm.DB, embeddingTableName, embeddingCollectionTableName st
 	}
 }
 
-func (s *PGStore) GetProductByID(id uint, p *models.Product) error {
+func (s *PGStore) GetProductByID(id uint64, p *models.Product) error {
 	if err := s.db.First(p, id); err != nil {
 		return err.Error
 	}
 	return nil
 }
 
-func (s *PGStore) GetProductsByIDs(productIDs []uint) ([]*models.Product, error) {
+func (s *PGStore) GetProductsByIDs(productIDs []uint64) ([]*models.Product, error) {
 	var products []*models.Product
 
 	if err := s.db.Where(productIDs).Find(&products).Order("id"); err.Error != nil {
@@ -92,7 +92,7 @@ func (s *PGStore) DecreaseProductStock(id uint, count uint) (*models.Product, er
 	return p, nil
 }
 
-func (s *PGStore) DeleteProduct(id uint) error {
+func (s *PGStore) DeleteProduct(id uint64) error {
 	p := models.NewProduct()
 	p.ID = id
 

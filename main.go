@@ -1,123 +1,69 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
+	"net"
 	"os"
 	"os/signal"
-	"products/internal/cache"
-	"products/internal/config"
-	"products/internal/database"
-	"products/internal/migrations"
-	"products/internal/server"
 	"syscall"
 	"time"
 
-	_ "products/docs"
-
-	"github.com/hudl/fargo"
-	"github.com/op/go-logging"
+	"github.com/ecomm-micro-org/products-service/api"
+	"github.com/ecomm-micro-org/products-service/cache"
+	"github.com/ecomm-micro-org/products-service/db"
+	"github.com/ecomm-micro-org/products-service/internal/config"
+	"google.golang.org/grpc"
 )
 
-func heartBeat(conn fargo.EurekaConnection, instance fargo.Instance, l *logging.Logger) {
-	for {
-		err := conn.HeartBeatInstance(&instance)
-		if err != nil {
-			l.Errorf("Heartbeat failed:", err)
-		} else {
-			l.Info("Heartbeat sent")
-		}
-
-		time.Sleep(30 * time.Second)
-	}
-}
-
-// @title products microservice API
-// @version 1.0
-// @description This is a products server for ecomm micro project
-// @termsOfService http://swagger.io/terms/
-
-// @contact.name API Support
-// @contact.url http://www.swagger.io/support
-// @contact.email support@swagger.io
-
-// @license.name Apache 2.0
-// @license.url http://www.apache.org/licenses/LICENSE-2.0.html
-
-// @host localhost:42069
-// @BasePath /
 func main() {
 	config.Init()
 
-	f, err := os.OpenFile(config.Config().LogFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0664)
-	if err != nil {
-		log.Fatalf("unable to open log file %v", config.Config().LogFile)
+	db.Connect()
+	db.AutoMigrate()
+	cache.Connect()
+
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
+
+	grpcServer := api.NewServer()
+
+	if err := runGRPCServer(context.Background(), grpcServer, 3*time.Second); err != nil {
+		log.Fatalf("unable to start the server : %v", err)
 	}
-	defer f.Close()
+}
 
-	backend := logging.NewLogBackend(f, "", 0)
-	logging.SetBackend(backend)
-
-	serviceRegistry := config.Config().ServiceRegistry
-	c := fargo.NewConn(serviceRegistry)
-	instance := fargo.Instance{
-		InstanceId:       "products-service",
-		HostName:         config.Config().EurekaHostname,
-		App:              "PRODUCTS-SERVICE",
-		IPAddr:           "localhost",
-		VipAddress:       "PRODUCTS-SERVICE",
-		SecureVipAddress: "PRODUCTS-SERVICE",
-		Status:           fargo.UP,
-		Port:             42069,
-		PortEnabled:      true,
-		DataCenterInfo: fargo.DataCenterInfo{
-			Name: fargo.MyOwn,
-		},
-		LeaseInfo: fargo.LeaseInfo{
-			RenewalIntervalInSecs: 30,
-			DurationInSecs:        90,
-		},
-	}
-
-	// Register with Eureka
-	err = c.RegisterInstance(&instance)
-	if err != nil {
-		log.Fatal("Failed to register:", err)
-	}
-
-	l := logging.MustGetLogger("products")
-	go heartBeat(c, instance, l)
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+func runGRPCServer(ctx context.Context, grpcServer *grpc.Server, shutdownTimeout time.Duration) error {
+	serverErr := make(chan error, 1)
 
 	go func() {
-		<-quit
-		log.Println("deregistering from eureka")
-		if err := c.DeregisterInstance(&instance); err != nil {
-			log.Printf("Unable to deregister from eureka : %v\n", err)
-		} else {
-			log.Println("Deregistered from eureka")
+		log.Println("products service running on port", config.Config().Port)
+		lis, err := net.Listen("tcp", config.Config().Port)
+		if err != nil {
+			log.Fatalf("unable to listen on port %s\n", config.Config().Port)
 		}
 
-		log.Println("Disconnecting from DB")
-		if err := database.Disconnect(); err != nil {
-			log.Printf("unable to disconnect from db :%v\n", err)
+		if err := grpcServer.Serve(lis); !errors.Is(err, grpc.ErrServerStopped) {
+			serverErr <- err
 		}
-		log.Println("Disconnected from DB")
-
-		os.Exit(0)
+		close(serverErr)
 	}()
 
-	database.Connect()
-	cache.Connect()
-	migrations.AutoMigrate()
+	shutdown := make(chan os.Signal, 1)
+	signal.Notify(shutdown, syscall.SIGINT, syscall.SIGTERM)
 
-	server.SetUp()
-
-	app := server.New()
-
-	port := config.Config().Port
-	if err := app.Listen(port); err != nil {
-		log.Fatalf("err : %v", err)
+	select {
+	case err := <-serverErr:
+		return err
+	case <-shutdown:
+		log.Println("shutdown signal received")
+	case <-ctx.Done():
+		log.Println("parent context cancelled")
 	}
+
+	grpcServer.GracefulStop()
+
+	log.Println("sever exited successfully")
+	return nil
 }

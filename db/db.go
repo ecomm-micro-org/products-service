@@ -1,10 +1,10 @@
-package database
+package db
 
 import (
 	"fmt"
 	"log"
-	"products/internal/config"
 
+	"github.com/ecomm-micro-org/products-service/internal/config"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )

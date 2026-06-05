@@ -8,15 +8,15 @@ import (
 )
 
 type Product struct {
-	ID            uint `gorm:"primaryKey"`
+	ID            uint64 `gorm:"primaryKey"`
 	Name          string
 	Price         float64
 	OriginalPrice float64
 	Image         string
 	Category      string
 	Description   string
-	Rating        uint
-	Reviews       uint
+	Rating        uint64
+	Reviews       uint64
 	Stock         uint64
 	InStock       bool
 	Tags          []string `gorm:"type:jsonb;serializer:json"`

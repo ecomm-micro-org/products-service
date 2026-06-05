@@ -1,6 +1,6 @@
 # Product API
  
-A RESTful API for managing products, built with [Go Fiber](https://gofiber.io/).
+A gRPC API for managing products.
  
 ---
  

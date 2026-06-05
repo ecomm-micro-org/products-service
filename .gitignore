@@ -1,2 +1,6 @@
-run.sh
 *.log
+obsolete
+
+.zed
+.vscode
+*.sh
