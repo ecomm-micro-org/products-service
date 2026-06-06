@@ -63,21 +63,21 @@ func (s *PGStore) UpdateProduct(p *models.Product) error {
 	return nil
 }
 
-func (s *PGStore) DecreaseProductStock(id uint, count uint) (*models.Product, error) {
+func (s *PGStore) DecreaseProductStock(id uint64, count uint64) (*models.Product, error) {
 	tx := s.db.Begin()
 	p := models.NewProduct()
 
-	if err := tx.First(p, p.ID); err.Error != nil {
+	if err := tx.First(p, id); err.Error != nil {
 		tx.Rollback()
 		return nil, err.Error
 	}
 
-	if p.Stock < uint64(count) {
+	if p.Stock < count {
 		tx.Rollback()
 		return nil, errors.New("unable to place order due to insufficient stock")
 	}
 
-	p.Stock = p.Stock - uint64(count)
+	p.Stock = p.Stock - count
 	if p.Stock == 0 {
 		p.InStock = false
 	}

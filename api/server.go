@@ -1,23 +1,19 @@
 package api
 
 import (
-	"context"
 	"log"
 
-	"github.com/ecomm-micro-org/products-service/auth"
-	"github.com/ecomm-micro-org/products-service/db"
 	"github.com/ecomm-micro-org/products-service/gen/pb"
 	"github.com/ecomm-micro-org/products-service/handlers"
 	"github.com/ecomm-micro-org/products-service/interceptors"
+	"github.com/ecomm-micro-org/products-service/internal/auth"
 	"github.com/ecomm-micro-org/products-service/internal/config"
 	"github.com/ecomm-micro-org/products-service/services"
-	"github.com/ecomm-micro-org/products-service/store"
 	"go.uber.org/zap"
-	"google.golang.org/genai"
 	"google.golang.org/grpc"
 )
 
-func NewServer() *grpc.Server {
+func NewServer(ps *services.ProductService) *grpc.Server {
 	l, err := zap.NewProduction()
 	if err != nil {
 		log.Fatalf("unable to create zap logger instance\n")
@@ -34,21 +30,6 @@ func NewServer() *grpc.Server {
 	if err != nil {
 		log.Fatalf("unable to create auth interceptor")
 	}
-
-	s := store.NewPGStore(db.Client(), config.Config().EmbeddingTableName, config.Config().EmbeddingCollectionTableName)
-
-	gc, err := genai.NewClient(
-		context.Background(),
-		&genai.ClientConfig{
-			APIKey:  config.Config().GeminiAPIKey,
-			Backend: genai.BackendGeminiAPI,
-		},
-	)
-	if err != nil {
-		log.Fatalf("unable to create genai client instance : %v\n", err)
-	}
-
-	ps := services.NewProductService(s, gc)
 
 	grpcServer := grpc.NewServer(
 		grpc.ChainUnaryInterceptor(li.UnaryLoggingInterceptor()),

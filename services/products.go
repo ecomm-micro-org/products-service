@@ -9,6 +9,7 @@ import (
 
 	"github.com/ecomm-micro-org/products-service/cache"
 	"github.com/ecomm-micro-org/products-service/gen/pb"
+	custom_errors "github.com/ecomm-micro-org/products-service/internal/constants/errors"
 	"github.com/ecomm-micro-org/products-service/models"
 	"github.com/ecomm-micro-org/products-service/store"
 	"github.com/google/uuid"
@@ -243,7 +244,7 @@ func (p *ProductService) AddProduct(ctx context.Context, req *pb.AddProductReque
 
 func (p *ProductService) UpdateProduct(ctx context.Context, req *pb.UpdateProductRequest) error {
 	if ctx.Value("role") == nil || ctx.Value("role") != "seller" {
-		return fmt.Errorf("cannot list product as user is not a seller")
+		return custom_errors.ErrNotEnoughPermissions
 	}
 
 	m := models.NewProduct()
@@ -275,7 +276,7 @@ func (p *ProductService) UpdateProduct(ctx context.Context, req *pb.UpdateProduc
 	return nil
 }
 
-func (p *ProductService) DecreaseProductStock(ctx context.Context, id uint, count uint) error {
+func (p *ProductService) DecreaseProductStock(ctx context.Context, id uint64, count uint64) error {
 	m, err := p.store.DecreaseProductStock(id, count)
 	if err != nil {
 		return err
@@ -310,7 +311,7 @@ func (p *ProductService) DecreaseProductStock(ctx context.Context, id uint, coun
 
 func (p *ProductService) DeleteProduct(ctx context.Context, id uint64) error {
 	if ctx.Value("role") == nil || ctx.Value("role") != "seller" {
-		return fmt.Errorf("cannot list product as user is not a seller")
+		return custom_errors.ErrNotEnoughPermissions
 	}
 
 	cacheKey := fmt.Sprintf("product:%v", id)
