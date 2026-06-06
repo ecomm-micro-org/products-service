@@ -1,233 +1,315 @@
-# Product API
- 
-A gRPC API for managing products.
- 
----
- 
-## Base URL
- 
+# Products Service
+
+`products-service` is a Go-based gRPC microservice for managing catalog products in my "runaway e-commerce application".
+
+It provides product CRUD operations, total-price calculation for order items, Redis-backed product caching, Kafka-driven stock reduction, and product embedding storage backed by PostgreSQL/pgvector.
+
+## What it does
+
+- Exposes a gRPC API for product operations
+- Stores product data in PostgreSQL via GORM
+- Caches single-product lookups in Redis
+- Consumes `orders.placed` Kafka events to decrease stock
+- Generates Gemini embeddings for newly created products
+- Stores embedding vectors in configured pgvector tables
+- Protects write operations with JWT-based gRPC auth interceptors
+- Logs unary and streaming gRPC requests with Zap
+
+## Tech stack
+
+- Go `1.25`
+- gRPC / Protocol Buffers
+- PostgreSQL + GORM
+- Redis
+- Kafka (`segmentio/kafka-go`)
+- Google GenAI (`gemini-embedding-2-preview`)
+- JWT auth
+- Docker
+
+## Project structure
+
+```text
+products/
+├── api/                 # gRPC server setup and interceptor wiring
+├── cache/               # Redis client setup
+├── db/                  # PostgreSQL connection and migrations
+├── gen/pb/              # Generated protobuf/go gRPC code
+├── handlers/            # gRPC handlers
+├── interceptors/        # Auth and logging interceptors
+├── internal/
+│   ├── auth/            # JWT validation and claims
+│   ├── config/          # Environment-based configuration
+│   └── kafka/           # Kafka consumer and topics
+├── models/              # Product and embedding models
+├── services/            # Business logic
+├── store/               # Postgres store implementation
+├── Dockerfile
+├── go.mod
+├── main.go
+└── run.sh
 ```
-/
-```
- 
----
- 
-## Endpoints
- 
-### Get Product by ID
- 
-```
-GET /product/:id
-```
- 
-Retrieves a single product by its unique identifier.
- 
-**Path Parameters**
- 
-| Parameter | Type     | Description              |
-|-----------|----------|--------------------------|
-| `id`      | `string` | The unique product ID    |
- 
-**Response**
- 
+
+## gRPC API
+
+Service: `products.ProductsService`
+
+### RPC methods
+
+| Method | Type | Auth | Notes |
+|---|---|---:|---|
+| `GetProductByID` | Unary | No | Reads product ID from gRPC metadata key `product_id` |
+| `GetProductsByIDs` | Server streaming | No | Streams products for the provided list of IDs |
+| `AddProduct` | Unary | Yes | Requires a valid bearer token with seller role |
+| `CalculateTotalPrice` | Unary | Yes | Calculates the total using stored product prices |
+| `UpdateProduct` | Unary | Yes | Requires seller role |
+| `DeleteProduct` | Unary | Yes | Requires seller role |
+
+## Request/response notes
+
+### `GetProductByID`
+This RPC currently accepts `google.protobuf.Empty` as the request body. The product ID must be sent as gRPC metadata:
+
+- Metadata key: `product_id`
+- Example value: `1`
+
+### `GetProductsByIDs`
+Accepts a request with:
+
 ```json
 {
-  "id": "123",
-  "name": "Product Name",
-  "price": 99.99
+  "product_ids": [1, 2, 3]
 }
 ```
- 
----
- 
-### Get Products by IDs
- 
-```
-POST /fetch_by_ids
-```
- 
-Retrieves multiple products by a list of IDs.
- 
-**Request Body**
- 
+
+and returns a server stream of product records.
+
+### `AddProduct`
+Request shape:
+
 ```json
 {
-  "ids": ["123", "456", "789"]
+  "name": "Wireless Mouse",
+  "price": 29.99,
+  "image": "https://example.com/mouse.png",
+  "category": "Electronics",
+  "description": "Compact wireless mouse",
+  "stock": 20,
+  "in_stock": true,
+  "tags": ["wireless", "mouse", "usb"]
 }
 ```
- 
-**Response**
- 
-```json
-[
-  { "id": "123", "name": "Product A", "price": 10.00 },
-  { "id": "456", "name": "Product B", "price": 20.00 }
-]
-```
- 
----
- 
-### Add Product
- 
-```
-POST /add
-```
- 
-Creates and adds a new product.
- 
-**Request Body**
- 
+
+On success, the service:
+
+1. saves the product,
+2. caches it in Redis,
+3. generates an embedding via Gemini,
+4. stores the embedding in the configured embedding table.
+
+### `CalculateTotalPrice`
+Request shape:
+
 ```json
 {
-  "name": "New Product",
-  "price": 49.99,
-  "description": "A great product"
-}
-```
- 
-**Response**
- 
-```json
-{
-  "id": "124",
-  "name": "New Product",
-  "price": 49.99,
-  "description": "A great product"
-}
-```
- 
----
- 
-### Calculate Total Price
- 
-```
-POST /calculate_total_price
-```
- 
-Calculates the total price for a given list of products and their quantities.
- 
-**Request Body**
- 
-```json
-{
-  "items": [
-    { "id": "123", "quantity": 2 },
-    { "id": "456", "quantity": 1 }
+  "order_items": [
+    { "product_id": 1, "quantity": 2 },
+    { "product_id": 5, "quantity": 1 }
   ]
 }
 ```
- 
-**Response**
- 
+
+Response shape:
+
 ```json
 {
-  "total": 40.00
+  "total_price": 89.97
 }
 ```
- 
----
- 
-### Update Product
- 
+
+## Authentication
+
+The service uses a gRPC auth interceptor with JWT bearer tokens.
+
+### Public RPCs
+These methods do not require authentication:
+
+- `GetProductByID`
+- `GetProductsByIDs`
+
+### Protected RPCs
+These methods require:
+
+- gRPC metadata header `Authorization`
+- value format: `Bearer <jwt>`
+
+Write operations additionally expect the JWT claims to include a seller role.
+
+## Kafka stock updates
+
+At startup, the service creates a Kafka consumer for topic:
+
+- `orders.placed`
+
+Each consumed message is expected to contain ordered items. For each item, the service decreases product stock in PostgreSQL and refreshes the cached product entry.
+
+## Environment variables
+
+The service reads configuration from environment variables in `internal/config/config.go`.
+
+| Variable | Required | Description |
+|---|---:|---|
+| `DSN` | Yes | PostgreSQL DSN |
+| `BROKERS` | Yes | Comma-separated Kafka broker list |
+| `CACHE_ADDR` | Yes | Redis address, e.g. `localhost:6379` |
+| `CACHE_PASSWD` | No | Redis password |
+| `PORT` | Yes | gRPC listen address, e.g. `:42069` |
+| `EMBEDDING_COLLECTION_TABLE_NAME` | Yes | Embedding collection table name |
+| `EMBEDDING_TABLE_NAME` | Yes | Embedding table name |
+| `GEMINI_API_KEY` | Yes | Google Gemini API key for embeddings |
+| `SECRET_KEY` | Yes | JWT signing secret |
+
+## Prerequisites
+
+Before running the service, make sure you have:
+
+- Go `1.25+`
+- PostgreSQL running and reachable through `DSN`
+- Redis running
+- Kafka running
+- A valid Gemini API key
+- The embedding tables already created in PostgreSQL
+
+## Running locally
+
+### 1. Export environment variables
+
+Example:
+
+```sh
+export DSN='host=localhost port=5431 user=postgres password=postgres dbname=postgres sslmode=disable'
+export CACHE_ADDR='localhost:6379'
+export CACHE_PASSWD=''
+export PORT=':42069'
+export BROKERS='localhost:9093'
+export SECRET_KEY='replace-with-a-secure-secret'
+export GEMINI_API_KEY='replace-with-your-gemini-api-key'
+export EMBEDDING_TABLE_NAME='langchain_pg_embedding'
+export EMBEDDING_COLLECTION_TABLE_NAME='langchain_pg_collection'
 ```
-PUT /product/:id
+
+### 2. Start the service
+
+```sh
+go run main.go
 ```
- 
-Updates an existing product by its ID.
- 
-**Path Parameters**
- 
-| Parameter | Type     | Description           |
-|-----------|----------|-----------------------|
-| `id`      | `string` | The unique product ID |
- 
-**Request Body**
- 
-```json
-{
-  "name": "Updated Name",
-  "price": 59.99,
-  "description": "Updated description"
-}
+
+The server starts on the address configured by `PORT`.
+
+## Running with Docker
+
+Build the image:
+
+```sh
+docker build -t products-service .
 ```
- 
-**Response**
- 
-```json
-{
-  "id": "123",
-  "name": "Updated Name",
-  "price": 59.99,
-  "description": "Updated description"
-}
+
+Run the container:
+
+```sh
+docker run --rm -p 42069:42069 \
+  -e DSN='host=host.docker.internal port=5431 user=postgres password=postgres dbname=postgres sslmode=disable' \
+  -e CACHE_ADDR='host.docker.internal:6379' \
+  -e CACHE_PASSWD='' \
+  -e PORT=':42069' \
+  -e BROKERS='host.docker.internal:9093' \
+  -e SECRET_KEY='replace-with-a-secure-secret' \
+  -e GEMINI_API_KEY='replace-with-your-gemini-api-key' \
+  -e EMBEDDING_TABLE_NAME='langchain_pg_embedding' \
+  -e EMBEDDING_COLLECTION_TABLE_NAME='langchain_pg_collection' \
+  products-service
 ```
- 
----
- 
-### Delete Product
- 
+
+## Example `grpcurl` usage
+
+### Get a product by ID
+
+```sh
+grpcurl -plaintext \
+  -rpc-header 'product_id: 1' \
+  localhost:42069 \
+  products.ProductsService/GetProductByID
 ```
-DELETE /product/:id
+
+### Stream products by IDs
+
+```sh
+grpcurl -plaintext \
+  -d '{"product_ids":[1,2,3]}' \
+  localhost:42069 \
+  products.ProductsService/GetProductsByIDs
 ```
- 
-Deletes a product by its ID.
- 
-**Path Parameters**
- 
-| Parameter | Type     | Description           |
-|-----------|----------|-----------------------|
-| `id`      | `string` | The unique product ID |
- 
-**Response**
- 
-```json
-{
-  "message": "Product deleted successfully"
-}
+
+### Add a product
+
+```sh
+grpcurl -plaintext \
+  -rpc-header 'Authorization: Bearer <jwt>' \
+  -d '{
+    "name":"Wireless Mouse",
+    "price":29.99,
+    "image":"https://example.com/mouse.png",
+    "category":"Electronics",
+    "description":"Compact wireless mouse",
+    "stock":20,
+    "in_stock":true,
+    "tags":["wireless","mouse","usb"]
+  }' \
+  localhost:42069 \
+  products.ProductsService/AddProduct
 ```
- 
----
- 
-## Route Summary
- 
-| Method   | Endpoint                  | Description                  |
-|----------|---------------------------|------------------------------|
-| `GET`    | `/product/:id`            | Get a product by ID          |
-| `POST`   | `/fetch_by_ids`           | Get multiple products by IDs |
-| `POST`   | `/add`                    | Add a new product            |
-| `POST`   | `/calculate_total_price`  | Calculate total price        |
-| `PUT`    | `/product/:id`            | Update a product by ID       |
-| `DELETE` | `/product/:id`            | Delete a product by ID       |
- 
----
- 
-## Error Responses
- 
-All endpoints may return the following error structure:
- 
-```json
-{
-  "error": "Description of the error"
-}
+
+### Calculate total price
+
+```sh
+grpcurl -plaintext \
+  -rpc-header 'Authorization: Bearer <jwt>' \
+  -d '{
+    "order_items":[
+      {"product_id":1,"quantity":2},
+      {"product_id":5,"quantity":1}
+    ]
+  }' \
+  localhost:42069 \
+  products.ProductsService/CalculateTotalPrice
 ```
- 
-| Status Code | Meaning               |
-|-------------|-----------------------|
-| `400`       | Bad Request           |
-| `404`       | Product Not Found     |
-| `500`       | Internal Server Error |
- 
----
- 
-## Setup
- 
-```go
-func ProductRoutes(r fiber.Router, c *controllers.Controller) {
-    r.Get("/product/:id", c.GetProductByID)
-    r.Post("/fetch_by_ids", c.GetProductsByIDs)
-    r.Post("/add", c.AddProduct)
-    r.Post("/calculate_total_price", c.CalculateTotalPrice)
-    r.Put("/product/:id", c.UpdateProduct)
-    r.Delete("/product/:id", c.DeleteProduct)
-}
+
+### Update a product
+
+```sh
+grpcurl -plaintext \
+  -rpc-header 'Authorization: Bearer <jwt>' \
+  -d '{
+    "id":1,
+    "name":"Wireless Mouse Pro",
+    "price":39.99,
+    "original_price":49.99,
+    "image":"https://example.com/mouse-pro.png",
+    "category":"Electronics",
+    "description":"Updated product description",
+    "stock":10,
+    "in_stock":true,
+    "tags":["wireless","mouse","pro"]
+  }' \
+  localhost:42069 \
+  products.ProductsService/UpdateProduct
+```
+
+### Delete a product
+
+```sh
+grpcurl -plaintext \
+  -rpc-header 'Authorization: Bearer <jwt>' \
+  -d '{"id":1}' \
+  localhost:42069 \
+  products.ProductsService/DeleteProduct
 ```
