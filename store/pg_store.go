@@ -39,16 +39,6 @@ func (s *PGStore) GetProductsByIDs(productIDs []uint64) ([]*models.Product, erro
 	return products, nil
 }
 
-func (s *PGStore) SearchProductsByKeyword(keyword string) ([]*models.Product, error) {
-	var products []*models.Product
-
-	if err := s.db.Where("name ILIKE ? OR category ILIKE ? OR description ILIKE ?", keyword, keyword, keyword).Find(&products); err != nil {
-		return nil, err.Error
-	}
-
-	return products, nil
-}
-
 func (s *PGStore) AddProduct(p *models.Product) error {
 	if err := s.db.Save(&p); err != nil {
 		return err.Error

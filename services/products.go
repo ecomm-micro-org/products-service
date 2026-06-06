@@ -18,9 +18,12 @@ import (
 	"google.golang.org/grpc"
 )
 
+type embeddingGenerator func(context.Context, *genai.Client, any) ([]float32, error)
+
 type ProductService struct {
 	store       store.Storer
 	genaiClient *genai.Client
+	embedder    embeddingGenerator
 	// messageService *MessageService
 }
 
@@ -32,6 +35,7 @@ func NewProductService(
 	return &ProductService{
 		store:       store,
 		genaiClient: genaiClient,
+		embedder:    generateEmbedding,
 		// messageService: messageService,
 	}
 }
@@ -42,7 +46,7 @@ func (p *ProductService) GetProductByID(ctx context.Context, id uint64) (*pb.Get
 	cacheKey := fmt.Sprintf("product:%v", id)
 	val, err := cache.Client().Get(ctx, cacheKey).Result()
 	if err == nil {
-		if err = json.Unmarshal([]byte(val), &m); err != nil {
+		if err = json.Unmarshal([]byte(val), m); err != nil {
 			return nil, err
 		}
 	} else {
@@ -164,7 +168,7 @@ func generateEmbedding(ctx context.Context, client *genai.Client, data any) ([]f
 }
 
 func (p *ProductService) AddProduct(ctx context.Context, req *pb.AddProductRequest) (*pb.AddProductResponse, error) {
-	if ctx.Value("role") == nil && ctx.Value("role") != "seller" {
+	if ctx.Value("role") == nil || ctx.Value("role") != "seller" {
 		return nil, fmt.Errorf("cannot list product as user is not a seller")
 	}
 
@@ -210,7 +214,7 @@ func (p *ProductService) AddProduct(ctx context.Context, req *pb.AddProductReque
 
 	// TODO: run ts seperately in a goroutine
 	// send req via chan
-	embeddings, err := generateEmbedding(ctx, p.genaiClient, res)
+	embeddings, err := p.embedder(ctx, p.genaiClient, res)
 	if err != nil {
 		return nil, err
 	}

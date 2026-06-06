@@ -11,6 +11,10 @@ func Client() *redis.Client {
 	return rdb
 }
 
+func SetClient(client *redis.Client) {
+	rdb = client
+}
+
 func Connect() {
 	cacheAddr := config.Config().CacheAddr
 	cachePasswd := config.Config().CachePasswd
