@@ -7,39 +7,13 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/ecomm-micro-org/products-service/cache"
-	"github.com/ecomm-micro-org/products-service/gen/pb"
 	custom_errors "github.com/ecomm-micro-org/products-service/internal/constants/errors"
 	"github.com/ecomm-micro-org/products-service/models"
+	"github.com/ecomm-micro-org/products-service/pb"
 	"github.com/ecomm-micro-org/products-service/store"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/genai"
-	"google.golang.org/grpc/metadata"
 )
-
-type testProductStream struct {
-	ctx      context.Context
-	sent     []*pb.GetProductsByIDsResponse
-	sendErr  error
-	trailers metadata.MD
-}
-
-func newTestProductStream() *testProductStream {
-	return &testProductStream{ctx: context.Background()}
-}
-
-func (s *testProductStream) SetHeader(metadata.MD) error  { return nil }
-func (s *testProductStream) SendHeader(metadata.MD) error { return nil }
-func (s *testProductStream) SetTrailer(md metadata.MD)    { s.trailers = md }
-func (s *testProductStream) Context() context.Context     { return s.ctx }
-func (s *testProductStream) SendMsg(any) error            { return nil }
-func (s *testProductStream) RecvMsg(any) error            { return nil }
-func (s *testProductStream) Send(resp *pb.GetProductsByIDsResponse) error {
-	if s.sendErr != nil {
-		return s.sendErr
-	}
-	s.sent = append(s.sent, resp)
-	return nil
-}
 
 func setupRedis(t *testing.T) *miniredis.Miniredis {
 	t.Helper()
@@ -105,15 +79,15 @@ func TestProductServiceGetProductsByIDs(t *testing.T) {
 	_ = memStore.AddProduct(&models.Product{ID: 1, Name: "Mouse", Price: 10})
 	_ = memStore.AddProduct(&models.Product{ID: 2, Name: "Monitor", Price: 20})
 
-	stream := newTestProductStream()
-	if err := svc.GetProductsByIDs([]uint64{2, 1}, stream); err != nil {
+	res, err := svc.GetProductsByIDs(context.Background(), []uint64{2, 1})
+	if err != nil {
 		t.Fatalf("GetProductsByIDs() error = %v", err)
 	}
-	if len(stream.sent) != 2 {
-		t.Fatalf("expected 2 streamed products, got %d", len(stream.sent))
+	if len(res.Products) != 2 {
+		t.Fatalf("expected 2 products, got %d", len(res.Products))
 	}
-	if stream.sent[0].Id != 2 || stream.sent[1].Id != 1 {
-		t.Fatalf("unexpected stream order: got %d then %d", stream.sent[0].Id, stream.sent[1].Id)
+	if res.Products[0].Id != 2 || res.Products[1].Id != 1 {
+		t.Fatalf("unexpected product order: got %d then %d", res.Products[0].Id, res.Products[1].Id)
 	}
 }
 
@@ -122,7 +96,7 @@ func TestProductServiceCalculateTotalPrice(t *testing.T) {
 	_ = memStore.AddProduct(&models.Product{ID: 1, Name: "Mouse", Price: 10})
 	_ = memStore.AddProduct(&models.Product{ID: 2, Name: "Monitor", Price: 20})
 
-	res, err := svc.CalculateTotalPrice([]*pb.OrderItems{
+	res, err := svc.CalculateTotalPrice([]*pb.OrderItem{
 		{ProductId: 1, Quantity: 2},
 		{ProductId: 2, Quantity: 1},
 	})
@@ -137,7 +111,7 @@ func TestProductServiceCalculateTotalPrice(t *testing.T) {
 func TestProductServiceCalculateTotalPriceMissingProduct(t *testing.T) {
 	svc, _ := newTestProductService(t)
 
-	if _, err := svc.CalculateTotalPrice([]*pb.OrderItems{{ProductId: 99, Quantity: 1}}); err == nil {
+	if _, err := svc.CalculateTotalPrice([]*pb.OrderItem{{ProductId: 99, Quantity: 1}}); err == nil {
 		t.Fatal("expected missing product error")
 	}
 }
@@ -147,14 +121,14 @@ func TestProductServiceAddProduct(t *testing.T) {
 	ctx := sellerContext()
 
 	res, err := svc.AddProduct(ctx, &pb.AddProductRequest{
-		Name:        "Desk Lamp",
-		Price:       25.5,
-		Image:       "lamp.png",
-		Category:    "Home",
-		Description: "Warm desk lamp",
-		Stock:       8,
-		InStock:     true,
-		Tags:        []string{"lamp", "home"},
+		Name:          "Desk Lamp",
+		OriginalPrice: 25.5,
+		Image:         "lamp.png",
+		Category:      "Home",
+		Description:   "Warm desk lamp",
+		Stock:         8,
+		InStock:       true,
+		Tags:          []string{"lamp", "home"},
 	})
 	if err != nil {
 		t.Fatalf("AddProduct() error = %v", err)

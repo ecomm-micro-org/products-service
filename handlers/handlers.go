@@ -3,14 +3,12 @@ package handlers
 import (
 	"context"
 	"errors"
-	"strconv"
+	"fmt"
 
-	"github.com/ecomm-micro-org/products-service/gen/pb"
 	custom_errors "github.com/ecomm-micro-org/products-service/internal/constants/errors"
+	"github.com/ecomm-micro-org/products-service/pb"
 	"github.com/ecomm-micro-org/products-service/services"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"gorm.io/gorm"
@@ -27,23 +25,8 @@ func NewProductHandler(s *services.ProductService) *ProductHandler {
 	}
 }
 
-func (h *ProductHandler) GetProductByID(ctx context.Context, _ *emptypb.Empty) (*pb.GetProductByIDResponse, error) {
-	md, ok := metadata.FromIncomingContext(ctx)
-	if !ok {
-		return nil, status.Error(codes.InvalidArgument, "no metadata provided")
-	}
-
-	productId := md.Get("product_id")
-	if len(productId) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "product id must be specified")
-	}
-
-	id, err := strconv.Atoi(productId[0])
-	if err != nil || id < 0 {
-		return nil, status.Error(codes.InvalidArgument, "invalid product id")
-	}
-
-	res, err := h.s.GetProductByID(ctx, uint64(id))
+func (h *ProductHandler) GetProductByID(ctx context.Context, req *pb.GetProductByIDRequest) (*pb.GetProductByIDResponse, error) {
+	res, err := h.s.GetProductByID(ctx, req.Id)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, status.Error(codes.NotFound, "product not found")
@@ -54,14 +37,14 @@ func (h *ProductHandler) GetProductByID(ctx context.Context, _ *emptypb.Empty) (
 	return res, nil
 }
 
-func (h *ProductHandler) GetProductsByIDs(req *pb.GetProductsByIDsRequest, stream grpc.ServerStreamingServer[pb.GetProductsByIDsResponse]) error {
-	return h.s.GetProductsByIDs(req.ProductIds, stream)
+func (h *ProductHandler) GetProductsByIDs(ctx context.Context, req *pb.GetProductsByIDsRequest) (*pb.GetProductsByIDsResponse, error) {
+	return h.s.GetProductsByIDs(ctx, req.ProductIds)
 }
 
 func (h *ProductHandler) AddProduct(ctx context.Context, req *pb.AddProductRequest) (*pb.AddProductResponse, error) {
 	res, err := h.s.AddProduct(ctx, req)
 	if err != nil {
-		return nil, status.Error(codes.Internal, "internal server error something went wrong")
+		return nil, status.Error(codes.Internal, fmt.Sprintf("internal server error something went wrong : %v", err))
 	}
 	return res, nil
 }

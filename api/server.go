@@ -3,11 +3,11 @@ package api
 import (
 	"log"
 
-	"github.com/ecomm-micro-org/products-service/gen/pb"
 	"github.com/ecomm-micro-org/products-service/handlers"
 	"github.com/ecomm-micro-org/products-service/interceptors"
 	"github.com/ecomm-micro-org/products-service/internal/auth"
 	"github.com/ecomm-micro-org/products-service/internal/config"
+	"github.com/ecomm-micro-org/products-service/pb"
 	"github.com/ecomm-micro-org/products-service/services"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"

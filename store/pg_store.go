@@ -40,14 +40,11 @@ func (s *PGStore) GetProductsByIDs(productIDs []uint64) ([]*models.Product, erro
 }
 
 func (s *PGStore) AddProduct(p *models.Product) error {
-	if err := s.db.Save(&p); err != nil {
-		return err.Error
-	}
-	return nil
+	return s.db.Table("products").Save(p).Error
 }
 
 func (s *PGStore) UpdateProduct(p *models.Product) error {
-	if err := s.db.Save(&p); err != nil {
+	if err := s.db.Save(p); err != nil {
 		return err.Error
 	}
 	return nil
@@ -86,7 +83,7 @@ func (s *PGStore) DeleteProduct(id uint64) error {
 	p := models.NewProduct()
 	p.ID = id
 
-	if err := s.db.Delete(&p); err != nil {
+	if err := s.db.Delete(p); err != nil {
 		return err.Error
 	}
 	return nil
