@@ -13,6 +13,7 @@ require (
 	github.com/trycourier/courier-go/v4 v4.8.0
 	go.uber.org/zap v1.28.0
 	google.golang.org/genai v1.54.0
+	google.golang.org/genproto/googleapis/api v0.0.0-20260319201613-d00831a3d3e7
 	google.golang.org/grpc v1.81.1
 	google.golang.org/protobuf v1.36.11
 	gorm.io/driver/postgres v1.6.0

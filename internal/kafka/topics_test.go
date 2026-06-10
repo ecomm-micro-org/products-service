@@ -3,7 +3,7 @@ package kafka
 import "testing"
 
 func TestTopicString(t *testing.T) {
-	if got := TopicOrderPlaced.String(); got != "orders.placed" {
+	if got := TopicOrderCreated.String(); got != "orders.created" {
 		t.Fatalf("expected orders.placed, got %q", got)
 	}
 }

@@ -4,3 +4,4 @@ obsolete
 .zed
 .vscode
 *.sh
+.env

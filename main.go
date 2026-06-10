@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/ecomm-micro-org/products-service/api"
 	"github.com/ecomm-micro-org/products-service/cache"
@@ -32,7 +31,7 @@ func main() {
 	kafkaErr := make(chan error)
 	cCfg := kafkaConsumer.ConsumerConfig{
 		Brokers:        config.Config().Brokers,
-		Topic:          kafkaConsumer.TopicOrderPlaced.String(),
+		Topic:          kafkaConsumer.TopicOrderCreated.String(),
 		GroupID:        "products-service",
 		Partition:      0,
 		MinBytes:       10e3, // 10KB
@@ -66,12 +65,22 @@ func main() {
 
 	grpcServer := api.NewServer(ps2)
 
-	if err := runGRPCServer(context.Background(), grpcServer, 3*time.Second); err != nil {
+	if err := runGRPCServer(context.Background(), grpcServer); err != nil {
 		log.Fatalf("unable to start the server : %v", err)
 	}
+
+	if err := c.Close(); err != nil {
+		log.Printf("couldnt close the kafka connection : %v\n", err)
+	}
+	log.Println("successfully closed the kafka connection")
+
+	if err := db.Disconnect(); err != nil {
+		log.Printf("couldnt disconnect from db : %v\n", err)
+	}
+	log.Println("db disconnected successfully")
 }
 
-func runGRPCServer(ctx context.Context, grpcServer *grpc.Server, shutdownTimeout time.Duration) error {
+func runGRPCServer(ctx context.Context, grpcServer *grpc.Server) error {
 	serverErr := make(chan error, 1)
 
 	go func() {

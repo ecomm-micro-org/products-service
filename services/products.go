@@ -8,14 +8,13 @@ import (
 	"time"
 
 	"github.com/ecomm-micro-org/products-service/cache"
-	"github.com/ecomm-micro-org/products-service/gen/pb"
 	custom_errors "github.com/ecomm-micro-org/products-service/internal/constants/errors"
 	"github.com/ecomm-micro-org/products-service/models"
+	"github.com/ecomm-micro-org/products-service/pb"
 	"github.com/ecomm-micro-org/products-service/store"
 	"github.com/google/uuid"
 	"github.com/pgvector/pgvector-go"
 	"google.golang.org/genai"
-	"google.golang.org/grpc"
 )
 
 type embeddingGenerator func(context.Context, *genai.Client, any) ([]float32, error)
@@ -44,23 +43,32 @@ func (p *ProductService) GetProductByID(ctx context.Context, id uint64) (*pb.Get
 	m := models.NewProduct()
 
 	cacheKey := fmt.Sprintf("product:%v", id)
-	val, err := cache.Client().Get(ctx, cacheKey).Result()
-	if err == nil {
-		if err = json.Unmarshal([]byte(val), m); err != nil {
-			return nil, err
+
+	client := cache.Client()
+	cacheHit := false
+	if client != nil {
+		val, err := client.Get(ctx, cacheKey).Result()
+		if err == nil {
+			if err = json.Unmarshal([]byte(val), m); err != nil {
+				return nil, err
+			}
+			cacheHit = true
 		}
-	} else {
+	}
+
+	if !cacheHit {
 		if err := p.store.GetProductByID(id, m); err != nil {
 			return nil, err
 		}
 
-		cacheKey := fmt.Sprintf("product:%v", m.ID)
-		cacheData, err := json.Marshal(m)
-		if err != nil {
-			return nil, err
+		if client != nil {
+			cacheKey := fmt.Sprintf("product:%v", m.ID)
+			cacheData, err := json.Marshal(m)
+			if err != nil {
+				return nil, err
+			}
+			client.Set(ctx, cacheKey, cacheData, 10*time.Minute)
 		}
-
-		cache.Client().Set(ctx, cacheKey, cacheData, 10*time.Minute)
 	}
 
 	res := &pb.GetProductByIDResponse{}
@@ -81,37 +89,37 @@ func (p *ProductService) GetProductByID(ctx context.Context, id uint64) (*pb.Get
 	return res, nil
 }
 
-func (p *ProductService) GetProductsByIDs(productIDs []uint64, stream grpc.ServerStreamingServer[pb.GetProductsByIDsResponse]) error {
+func (p *ProductService) GetProductsByIDs(ctx context.Context, productIDs []uint64) (*pb.GetProductsByIDsResponse, error) {
 	products, err := p.store.GetProductsByIDs(productIDs)
 	if err != nil {
-		return err
+		return nil, err
 	}
+
+	res := &pb.GetProductsByIDsResponse{}
 
 	for _, v := range products {
-		res := &pb.GetProductsByIDsResponse{}
+		r := &pb.ProductResponse{}
 
-		res.Id = v.ID
-		res.Name = v.Name
-		res.Price = v.Price
-		res.OriginalPrice = v.OriginalPrice
-		res.Image = v.Image
-		res.Category = v.Category
-		res.Description = v.Description
-		res.Stock = v.Stock
-		res.InStock = v.InStock
-		res.Rating = v.Rating
-		res.Reviews = v.Reviews
-		res.Tags = v.Tags
+		r.Id = v.ID
+		r.Name = v.Name
+		r.Price = v.Price
+		r.OriginalPrice = v.OriginalPrice
+		r.Image = v.Image
+		r.Category = v.Category
+		r.Description = v.Description
+		r.Stock = v.Stock
+		r.InStock = v.InStock
+		r.Rating = v.Rating
+		r.Reviews = v.Reviews
+		r.Tags = v.Tags
 
-		if err = stream.Send(res); err != nil {
-			return err
-		}
+		res.Products = append(res.Products, r)
 	}
 
-	return nil
+	return res, nil
 }
 
-func (p *ProductService) CalculateTotalPrice(orderItems []*pb.OrderItems) (*pb.CalculateTotalPriceResponse, error) {
+func (p *ProductService) CalculateTotalPrice(orderItems []*pb.OrderItem) (*pb.CalculateTotalPriceResponse, error) {
 	var productIDs []uint64
 	for _, v := range orderItems {
 		productIDs = append(productIDs, v.ProductId)
@@ -175,7 +183,8 @@ func (p *ProductService) AddProduct(ctx context.Context, req *pb.AddProductReque
 	m := models.NewProduct()
 
 	m.Name = req.Name
-	m.Price = req.Price
+	m.OriginalPrice = req.OriginalPrice
+	m.Price = req.OriginalPrice
 	m.Image = req.Image
 	m.Category = req.Category
 	m.Description = req.Description
@@ -193,8 +202,10 @@ func (p *ProductService) AddProduct(ctx context.Context, req *pb.AddProductReque
 		return nil, err
 	}
 
-	if cmd := cache.Client().Set(ctx, cacheKey, cacheData, 30*time.Minute); cmd.Err() != nil {
-		log.Printf("unable to save product in cache : %v", err)
+	if client := cache.Client(); client != nil {
+		if cmd := client.Set(ctx, cacheKey, cacheData, 30*time.Minute); cmd.Err() != nil {
+			log.Printf("unable to save product in cache : %v", cmd.Err())
+		}
 	}
 
 	res := &pb.AddProductResponse{}
@@ -274,8 +285,10 @@ func (p *ProductService) UpdateProduct(ctx context.Context, req *pb.UpdateProduc
 		return err
 	}
 
-	if cmd := cache.Client().Set(ctx, cacheKey, cacheData, 30*time.Minute); cmd.Err() != nil {
-		return cmd.Err()
+	if client := cache.Client(); client != nil {
+		if cmd := client.Set(ctx, cacheKey, cacheData, 30*time.Minute); cmd.Err() != nil {
+			return cmd.Err()
+		}
 	}
 	return nil
 }
@@ -292,7 +305,9 @@ func (p *ProductService) DecreaseProductStock(ctx context.Context, id uint64, co
 		return err
 	}
 
-	cache.Client().Set(ctx, cacheKey, cacheData, 30*time.Minute)
+	if client := cache.Client(); client != nil {
+		client.Set(ctx, cacheKey, cacheData, 30*time.Minute)
+	}
 
 	return nil
 }
@@ -319,6 +334,8 @@ func (p *ProductService) DeleteProduct(ctx context.Context, id uint64) error {
 	}
 
 	cacheKey := fmt.Sprintf("product:%v", id)
-	cache.Client().Del(ctx, cacheKey)
+	if client := cache.Client(); client != nil {
+		client.Del(ctx, cacheKey)
+	}
 	return p.store.DeleteProduct(id)
 }
